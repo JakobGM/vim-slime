@@ -10,6 +10,11 @@ if !exists("g:slime_preserve_curpos")
   let g:slime_preserve_curpos = 1
 end
 
+" If slime should try to send kitty commands to /tmp/kitty_<filetype>
+if !exists("g:slime_kitty_filetype_socket")
+  let g:slime_kitty_filetype_socket = 0
+end
+
 " screen and tmux need a file, so set a default if not configured
 if !exists("g:slime_paste_file")
   let g:slime_paste_file = expand("$HOME/.slime_paste")
@@ -46,11 +51,24 @@ endfunction
 
 function! s:KittySend(config, text)
   call s:WritePasteFile(a:text)
-  call system("kitty @ send-text --match id:" . shellescape(a:config["window_id"]) .
-    \ " --from-file " . g:slime_paste_file)
+  let l:kitty_socket_file = "/tmp/kitty_" . &filetype
+  if g:slime_kitty_filetype_socket && filereadable(l:kitty_socket_file)
+    " Filetype socket exists, and we should send commands to it instead
+    let l:send_command = "kitty @ --to unix:/tmp/kitty_" . &filetype . " send-text"
+  else
+    " Fall back to ordinary id match
+    let l:send_command = "kitty @ send-text --match id:" . shellescape(a:config["window_id"])
+  end
+  call system(l:send_command . " --from-file " . g:slime_paste_file)
 endfunction
 
 function! s:KittyConfig() abort
+  let l:kitty_socket_file = "/tmp/kitty_" . &filetype
+  if g:slime_kitty_filetype_socket && filereadable(l:kitty_socket_file)
+    " We do not require a kitty window id, as filetype socket is enabled
+    let b:slime_config = {}
+    return
+  endif
   if !exists("b:slime_config")
     let b:slime_config = {"window_id": 1}
   end

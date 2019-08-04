@@ -16,206 +16,18 @@ if !exists("g:slime_paste_file")
 end
 
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-" Screen
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-function! s:ScreenSend(config, text)
-  call s:WritePasteFile(a:text)
-  call system("screen -S " . shellescape(a:config["sessionname"]) . " -p " . shellescape(a:config["windowname"]) .
-        \ " -X eval \"readreg p " . g:slime_paste_file . "\"")
-  call system("screen -S " . shellescape(a:config["sessionname"]) . " -p " . shellescape(a:config["windowname"]) .
-        \ " -X paste p")
-  call system('screen -X colon ""')
-endfunction
-
-function! s:ScreenSessionNames(A,L,P)
-  return system("screen -ls | awk '/Attached/ {print $1}'")
-endfunction
-
-function! s:ScreenConfig() abort
-  if !exists("b:slime_config")
-    let b:slime_config = {"sessionname": "", "windowname": "0"}
-  end
-  let b:slime_config["sessionname"] = input("screen session name: ", b:slime_config["sessionname"], "custom,<SNR>" . s:SID() . "_ScreenSessionNames")
-  let b:slime_config["windowname"]  = input("screen window name: ",  b:slime_config["windowname"])
-endfunction
-
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 " Kitty
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 function! s:KittySend(config, text)
   call s:WritePasteFile(a:text)
-  call system("kitty @ send-text --match id:" . shellescape(a:config["window_id"]) .
-    \ " --from-file " . g:slime_paste_file)
+  call system("kitty @ --to unix:/tmp/kitty_" . &filetype . " send-text --from-file " . g:slime_paste_file)
 endfunction
 
 function! s:KittyConfig() abort
   if !exists("b:slime_config")
     let b:slime_config = {"window_id": 1}
   end
-  let b:slime_config["window_id"] = input("kitty target window: ", b:slime_config["window_id"])
-endfunction
-
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-" Tmux
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-function! s:TmuxCommand(config, args)
-  let l:socket = a:config["socket_name"]
-  " For an absolute path to the socket, use tmux -S.
-  " For a relative path to the socket in tmux's temporary directory, use tmux -L.
-  " Case sensitivity does not matter here, but let's follow good practice.
-  " TODO: Make this cross-platform. Windows supports tmux as of mid-2016.
-  let l:socket_option = l:socket[0] ==? "/" ? "-S" : "-L"
-  return system("tmux " . l:socket_option . " " . shellescape(l:socket) . " " . a:args)
-endfunction
-
-function! s:TmuxSend(config, text)
-  call s:WritePasteFile(a:text)
-  call s:TmuxCommand(a:config, "load-buffer " . g:slime_paste_file)
-  call s:TmuxCommand(a:config, "paste-buffer -d -t " . shellescape(a:config["target_pane"]))
-endfunction
-
-function! s:TmuxPaneNames(A,L,P)
-  let format = '#{pane_id} #{session_name}:#{window_index}.#{pane_index} #{window_name}#{?window_active, (active),}'
-  return s:TmuxCommand(b:slime_config, "list-panes -a -F " . shellescape(format))
-endfunction
-
-function! s:TmuxConfig() abort
-  if !exists("b:slime_config")
-    let b:slime_config = {"socket_name": "default", "target_pane": ":"}
-  end
-  let b:slime_config["socket_name"] = input("tmux socket name or absolute path: ", b:slime_config["socket_name"])
-  let b:slime_config["target_pane"] = input("tmux target pane: ", b:slime_config["target_pane"], "custom,<SNR>" . s:SID() . "_TmuxPaneNames")
-  if b:slime_config["target_pane"] =~ '\s\+'
-    let b:slime_config["target_pane"] = split(b:slime_config["target_pane"])[0]
-  endif
-endfunction
-
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-" Neovim Terminal
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-function! s:NeovimSend(config, text)
-  " Neovim jobsend is fully asynchronous, it causes some problems with
-  " iPython %cpaste (input buffering: not all lines sent over)
-  " So this s:WritePasteFile can help as a small lock & delay
-  call s:WritePasteFile(a:text)
-  call chansend(str2nr(a:config["jobid"]), split(a:text, "\n", 1))
-endfunction
-
-function! s:NeovimConfig() abort
-  if !exists("b:slime_config")
-    let b:slime_config = {"jobid": "3"}
-  end
-  let b:slime_config["jobid"] = input("jobid: ", b:slime_config["jobid"])
-endfunction
-
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-" Conemu
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-function! s:ConemuSend(config, text)
-  let l:prefix = "conemuc -guimacro:" . a:config["HWND"]
-  " use the selection register to send text to ConEmu using the windows
-  " clipboard (see help gui-clipboard)
-  " save the current selection to restore it after send
-  let tmp = @*
-  let @* = a:text
-  call system(l:prefix . " print")
-  let @* = tmp
-endfunction
-
-function! s:ConemuConfig() abort
-  " set destination for send commands, as specified in
-  " http://conemu.github.io/en/GuiMacro.html#Command_line
-  if !exists("b:slime_config")
-    " defaults to the active tab/split of the first found ConEmu window
-    let b:slime_config = {"HWND": "0"}
-  end
-  let b:slime_config["HWND"] = input("Console server HWND: ", b:slime_config["HWND"])
-endfunction
-
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-" whimrepl
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-function! s:WhimreplSend(config, text)
-  call remote_send(a:config["server_name"], a:text)
-endfunction
-
-function! s:WhimreplConfig() abort
-  if !exists("b:slime_config")
-    let b:slime_config = {"server_name": "whimrepl"}
-  end
-  let b:slime_config["server_name"] = input("whimrepl server name: ", b:slime_config["server_name"])
-endfunction
-
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-" vim terminal
-"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-function! s:VimterminalSend(config, text)
-  let bufnr = str2nr(get(a:config,"bufnr",""))
-  if len(term_getstatus(bufnr))==0
-    echoerr "Invalid terminal. Use :SlimeConfig to select a terminal"
-    return
-  endif
-  " Ideally we ought to be able to use a single term_sendkeys call however as
-  " of vim 8.0.1203 doing so can cause terminal display issues for longer
-  " selections of text.
-  for l in split(a:text,'\n\zs')
-    call term_sendkeys(bufnr,substitute(l,'\n',"\r",''))
-    call term_wait(bufnr)
-  endfor
-endfunction
-
-function! s:VimterminalDescription(idx,info)
-  let title = term_gettitle(a:info.bufnr)
-  if len(title)==0
-    let title = term_getstatus(a:info.bufnr)
-  endif
-  return printf("%2d.%4d %s [%s]",a:idx,a:info.bufnr,a:info.name,title)
-endfunction
-
-function! s:VimterminalConfig() abort
-  if !exists("*term_start")
-    echoerr "vimterminal support requires vim built with :terminal support"
-    return
-  endif
-  if !exists("b:slime_config")
-    let b:slime_config = {"bufnr": ""}
-  end
-  let bufs = filter(term_list(),"term_getstatus(v:val)=~'running'")
-  let terms = map(bufs,"getbufinfo(v:val)[0]")
-  let choices = map(copy(terms),"s:VimterminalDescription(v:key+1,v:val)")
-  call add(choices, printf("%2d. <New instance>",len(terms)+1))
-  let choice = len(choices)>1
-        \ ? inputlist(choices)
-        \ : 1
-  if choice > 0
-    if choice>len(terms)
-      if !exists("g:slime_vimterminal_cmd")
-          let cmd = input("Enter a command to run [".&shell."]:")
-          if len(cmd)==0
-            let cmd = &shell
-          endif
-      else
-          let cmd = g:slime_vimterminal_cmd
-      endif
-      let winid = win_getid()
-      if exists("g:slime_vimterminal_config")
-        let new_bufnr = term_start(cmd, g:slime_vimterminal_config)
-      else
-        let new_bufnr = term_start(cmd)
-      end
-      call win_gotoid(winid)
-      let b:slime_config["bufnr"] = new_bufnr
-    else
-      let b:slime_config["bufnr"] = terms[choice-1].bufnr
-    endif
-  endif
 endfunction
 
 
@@ -369,4 +181,3 @@ function! s:SlimeDispatch(name, ...)
   let target = substitute(tolower(g:slime_target), '\(.\)', '\u\1', '') " Capitalize
   return call("s:" . target . a:name, a:000)
 endfunction
-
